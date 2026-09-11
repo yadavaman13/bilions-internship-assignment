@@ -6,6 +6,22 @@ and answer them, everyone comments.
 This repository is the starting point for the Bilions Full Stack Developer internship
 exercise. It runs. Read the brief for what to do with it.
 
+
+---
+
+## Deliverables & Submission Documentation
+
+All evaluation deliverables are documented in `docs/`:
+
+1. **[Part 1: Code Review & Top 5 Vulnerability Fixes](docs/CODE_REVIEW.md)** (`docs/CODE_REVIEW.md`)  
+   Comprehensive audit ranking vulnerabilities by business risk. Details the 5 applied fixes with Git commit SHAs (`fix:`) across atomic branches (`fix/part-001-...` through `fix/part-005-...`), plus technical deferral rationale for remaining findings.
+
+2. **[Part 2: SLA Breach Tracking Decision Notes](docs/DECISION_NOTES.md)** (`docs/DECISION_NOTES.md`)  
+   Engineering decision notes documenting First-Response SLA semantics, boundary definitions (`now > deadline`), 3-state lifecycle (`WITHIN_SLA`, `MET`, `BREACHED`), backward-compatible API design, and database-level SQL filtering/pagination.
+
+3. **[AI Usage Log & Verification Trail](docs/AI_USAGE_LOG.md)** (`docs/AI_USAGE_LOG.md`)  
+   Authentic developer audit trail detailing prompts, SLA edge-case brainstorming, Git commit conventions, documentation drafting, and specific examples where AI output was flawed (in-memory pagination, false `UNION` exploit, clock-stopping triggers) and how it was corrected.
+
 ---
 
 ## Stack
@@ -78,32 +94,33 @@ not be able to see each other's tickets.
 | `admin`     | Everything an agent can, plus delete tickets                    |
 
 ## API
-
-| Method | Path                             | Notes                          |
-| ------ | -------------------------------- | ------------------------------ |
-| POST   | `/api/auth/login`                | Returns a JWT                  |
-| POST   | `/api/auth/invite/accept`        | New joiner sets their password |
-| GET    | `/api/tickets`                   | Paginated, 20 per page         |
-| GET    | `/api/tickets/:id`               | Ticket plus its comments       |
-| POST   | `/api/tickets`                   | Raise a ticket                 |
-| PATCH  | `/api/tickets/:id/assign`        | Claim a ticket                 |
-| DELETE | `/api/tickets/:id`               | Admin only                     |
-| POST   | `/api/tickets/:id/comments`      | Add a comment                  |
-
-## Layout
-
-```
-db/schema.sql                     tables
-server/src/config.js              configuration and SLA targets
-server/src/db/pool.js             mysql2 connection pool
-server/src/middleware/auth.js     requireAuth, requireRole
-server/src/routes/                auth, tickets, comments
-server/src/services/              ticketService — all ticket SQL
-server/scripts/reset-db.js        schema + deterministic seed
-client/src/app/                   store, api helper
-client/src/features/tickets/      TicketList, TicketDetail
-client/src/features/auth/         Login
-```
+ 
+ | Method | Path                             | Notes                          |
+ | ------ | -------------------------------- | ------------------------------ |
+ | POST   | `/api/auth/login`                | Returns a JWT                  |
+ | POST   | `/api/auth/invite/accept`        | New joiner sets their password (requires token) |
+ | GET    | `/api/tickets`                   | Paginated (20/page), accepts `?slaState=BREACHED\|MET\|WITHIN_SLA`, `?sortBy`, `?order`; includes `.sla` object |
+ | GET    | `/api/tickets/:id`               | Ticket plus its comments and `.sla` metadata object |
+ | POST   | `/api/tickets`                   | Raise a ticket                 |
+ | PATCH  | `/api/tickets/:id/assign`        | Claim a ticket (Agent/Admin only, same org) |
+ | DELETE | `/api/tickets/:id`               | Delete a ticket (Admin only, same org) |
+ | POST   | `/api/tickets/:id/comments`      | Add a comment                  |
+ 
+ ## Layout
+ 
+ ```
+ docs/                             evaluation deliverables (CODE_REVIEW, DECISION_NOTES, AI_USAGE_LOG)
+ db/schema.sql                     tables
+ server/src/config.js              configuration and SLA targets
+ server/src/db/pool.js             mysql2 connection pool
+ server/src/middleware/auth.js     requireAuth, requireRole
+ server/src/routes/                auth, tickets, comments
+ server/src/services/              ticketService, slaService — SQL queries & SLA computation
+ server/scripts/reset-db.js        schema + deterministic seed
+ client/src/app/                   store, api helper
+ client/src/features/tickets/      TicketList, TicketDetail
+ client/src/features/auth/         Login
+ ```
 
 ## Known state
 
