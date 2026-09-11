@@ -75,10 +75,14 @@ router.patch('/:id/assign', requireAuth, async (req, res, next) => {
   }
 });
 
-router.delete('/:id', requireAuth, async (req, res, next) => {
+// Fix: BUG-05 — previously only requireAuth guarded this route 
+// any authenticated user (including requesters) could delete any ticket from any organisation.
+router.delete('/:id', requireAuth, requireRole('admin'), async (req, res, next) => {
   try {
     const ticket = await getTicketById(Number(req.params.id));
     if (!ticket) return res.status(404).json({ error: 'Not found' });
+    // Org check: admin may only delete tickets belonging to their own organisation.
+    if (ticket.org_id !== req.user.orgId) return res.status(404).json({ error: 'Not found' });
     await deleteTicket(ticket.id);
     res.status(204).end();
   } catch (err) {
