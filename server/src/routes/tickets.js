@@ -62,8 +62,13 @@ router.post('/', requireAuth, async (req, res, next) => {
   }
 });
 
-router.patch('/:id/assign', requireAuth, async (req, res, next) => {
+// Fix: BUG-07 — previously only requireAuth guarded this route; added role check
+router.patch('/:id/assign', requireAuth, requireRole('agent', 'admin'), async (req, res, next) => {
   try {
+    const ticket = await getTicketById(Number(req.params.id));
+    if (!ticket) return res.status(404).json({ error: 'Not found' });
+    // Org check: agents may only claim tickets belonging to their own organisation.
+    if (ticket.org_id !== req.user.orgId) return res.status(404).json({ error: 'Not found' });
     const result = await assignTicket(Number(req.params.id), req.user.id);
     if (!result) return res.status(404).json({ error: 'Not found' });
     if (result.conflict) {
