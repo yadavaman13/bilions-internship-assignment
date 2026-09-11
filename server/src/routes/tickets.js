@@ -32,6 +32,9 @@ router.get('/:id', requireAuth, async (req, res, next) => {
   try {
     const ticket = await getTicketById(Number(req.params.id));
     if (!ticket) return res.status(404).json({ error: 'Not found' });
+    // Fix: BUG-04 — previously any authenticated user could read any ticket by id.
+    // Return 404, so we don't leak that the ticket exists at another org.
+    if (ticket.org_id !== req.user.orgId) return res.status(404).json({ error: 'Not found' });
 
     const comments = await listComments(ticket.id);
     res.json({ ticket, comments });
