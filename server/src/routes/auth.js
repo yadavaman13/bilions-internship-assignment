@@ -36,17 +36,33 @@ router.post('/login', async (req, res, next) => {
 });
 
 /**
- * Completes an emailed invitation. The invite link carries the user id;
- * the new joiner picks their own password here.
+ * Completes an emailed invitation.
+ *
+ * The invite link must carry a signed JWT (sub = userId). The new joiner
+ * supplies their chosen password; we verify the token before touching the DB
+ * and store a bcrypt hash — never the raw password string.
+ *
+ * Fix: BUG-01+02 — previously stored plaintext and required no authentication.
  */
 router.post('/invite/accept', async (req, res, next) => {
   try {
-    const { userId, password } = req.body;
-    if (!userId || !password) {
-      return res.status(400).json({ error: 'userId and password are required' });
+    const { token, password } = req.body;
+    if (!token || !password) {
+      return res.status(400).json({ error: 'token and password are required' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'password must be at least 8 characters' });
     }
 
-    await query('UPDATE users SET password_hash = ? WHERE id = ?', [password, userId]);
+    let payload;
+    try {
+      payload = jwt.verify(token, config.jwtSecret);
+    } catch {
+      return res.status(401).json({ error: 'Invalid or expired invite token' });
+    }
+
+    const hashPassword = await bcrypt.hash(password, 10);
+    await query('UPDATE users SET password_hash = ? WHERE id = ?', [hashPassword, payload.sub]);
     res.json({ ok: true });
   } catch (err) {
     next(err);
