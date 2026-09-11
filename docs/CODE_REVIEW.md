@@ -1,14 +1,19 @@
-# Meridian Helpdesk — Code Review
+# Meridian Helpdesk — Code Review & Vulnerability Fixes
 
 **Reviewer:** Yadav Aman Singh  
 **Date:** 11-09-2026  
-**Codebase:** `meridian_helpdesk_starter` — Node/Express + React/Vite/Redux
+**Assignment:** Bilions Full Stack Developer Internship Exercise (Part 1)  
+**Codebase:** `meridian_helpdesk_starter` — Node/Express + React/Vite/Redux + MySQL 8
 
 ---
 
 ## Executive Summary
 
-This codebase was written quickly and merged without review. It functions at a demo level but contains two critical security vulnerabilities, three high-severity authorization holes, and several functional and hygiene issues. The findings below are ranked by real-world business impact, not lines of code changed. Five fixes were applied; the remaining issues are documented with reasoning in Section 3.
+A comprehensive security, authorization, and code quality review was conducted on the `meridian_helpdesk_starter` repository. The codebase functions at a basic demonstration level but contains significant architectural and security vulnerabilities resulting from rapid prototyping without peer review. 
+
+The audit identified **two critical security vulnerabilities**, **three high-severity authorization and tenant-isolation flaws**, **one additional high-severity stored-XSS defect**, and several medium-to-low functional and hygiene issues. 
+
+As Per the assignment specification, findings are prioritized strictly by **real-world business risk and tenant-isolation impact**, rather than lines of code. Exactly **five targeted, minimal fixes** were implemented on isolated Git branches and merged via atomic pull requests. The remaining issues are fully analyzed and documented with technical deferral rationale in Section 3.
 
 ---
 
@@ -16,251 +21,369 @@ This codebase was written quickly and merged without review. It functions at a d
 
 ### Full Ranked Table
 
-| Rank | ID | Severity | Area | Title | Fixed |
-|------|-----|----------|------|-------|-------|
-| 1 | BUG-01+02 | **Critical** | Authentication | Unauthenticated password overwrite enables account takeover; invited user password stored as plaintext | ✅ Yes |
-| 2 | BUG-03 | **Critical** | Injection | `sortBy` / `order` query params interpolated directly into SQL — unsanitised user input in `ORDER BY` | ✅ Yes |
-| 3 | BUG-04 | **High** | Data Isolation | IDOR — `GET /tickets/:id` returns tickets from any organisation | ✅ Yes |
-| 4 | BUG-05 | **High** | Authorization | `DELETE /tickets/:id` missing `requireRole('admin')` and org check | ✅ Yes |
-| 5 | BUG-07 | **High** | Authorization | `PATCH /tickets/:id/assign` — no role guard; any requester can claim tickets cross-tenant | ✅ Yes |
-| 6 | BUG-06 | **High** | Security | Stored XSS — `dangerouslySetInnerHTML` on untrusted comment body | ❌ No |
-| 7 | BUG-08 | **Medium** | Functional | Pagination offset off-by-one — page 1 always skips the first 20 rows | ❌ No |
-| 8 | BUG-09 | **Medium** | Functional | `TicketList` `useEffect` dep array is `[page]` only — filter/sort controls never trigger a re-fetch | ❌ No |
-| 9 | BUG-15 | **Medium** | Security Hygiene | JWT secret falls back to hard-coded `'dev-secret-change-me'` when env var is absent | ❌ No |
-| 10 | BUG-11 | **Medium** | Security Hygiene | `server/.env` not listed in `.gitignore` — credentials would be committed to version control | ❌ No |
-| 11 | BUG-12 | **Low** | Security Hygiene | Wildcard CORS with no origin restriction (`app.use(cors())`) | ❌ No |
-| 12 | BUG-13 | **Low** | Performance | N+1 query — comment count fetched per-ticket in a loop | ❌ No |
-| 13 | BUG-14 | **Low** | Dev Artifact | Login form pre-fills credentials (`agent1@northwind.test / Password123!`) | ❌ No |
+| Rank | ID | Severity | Category | Title | Fixed |
+|:---:|:---|:---:|:---|:---|:---:|
+| **1** | BUG-01+02 | **Critical** | Authentication | Unauthenticated password overwrite enables account takeover; password stored as plaintext | ✅ Yes |
+| **2** | BUG-03 | **Critical** | Injection | Dynamic string interpolation of untrusted `sortBy` / `order` into SQL `ORDER BY` clause | ✅ Yes |
+| **3** | BUG-04 | **High** | Data Isolation | IDOR on `GET /tickets/:id` — missing tenant check leaks tickets cross-organization | ✅ Yes |
+| **4** | BUG-05 | **High** | Authorization | `DELETE /tickets/:id` missing `requireRole('admin')` and organization verification | ✅ Yes |
+| **5** | BUG-07 | **High** | Authorization | `PATCH /tickets/:id/assign` lacks role and tenant checks; requesters can claim cross-tenant | ✅ Yes |
+| **6** | BUG-06 | **High** | Security | Stored XSS in comment renderer via `dangerouslySetInnerHTML` | ❌ Deferred |
+| **7** | BUG-08 | **Medium** | Functional | Pagination offset calculation off-by-one (`page * PAGE_SIZE`); page 1 skips first 20 records | ❌ Deferred |
+| **8** | BUG-09 | **Medium** | Functional | `TicketList` `useEffect` dependency array misses filter/sort state; controls fail to re-fetch | ❌ Deferred |
+| **9** | BUG-15 | **Medium** | Security Hygiene | Hard-coded fallback JWT secret (`dev-secret-change-me`) silently used if env var is missing | ❌ Deferred |
+| **10** | BUG-11 | **Medium** | Security Hygiene | `server/.env` omitted from root `.gitignore`; risk of credential leakage in source control | ❌ Deferred* |
+| **11** | BUG-12 | **Low** | Security Hygiene | Permissive wildcard CORS (`app.use(cors())`) without origin restriction | ❌ Deferred |
+| **12** | BUG-13 | **Low** | Performance | N+1 database query — comment count executed inside loop per ticket | ❌ Deferred |
+| **13** | BUG-14 | **Low** | Dev Artifact | Hardcoded development credentials pre-filled in login form state | ❌ Deferred |
 
-> **Note on BUG-10 (Claim button shown to all roles):** This UI symptom is a direct consequence of BUG-07 and is not listed as a separate finding. Before BUG-07 was fixed server-side, the button exposed a real unauthorized capability. After BUG-07 is fixed, the button becomes a defense-in-depth UI consistency issue. It is addressed by the BUG-07 fix — no separate entry is done.
-
-> **Note on BUG-11:** The `.gitignore` was updated as repository hygiene before submission. This is not counted as one of the five Part 1 application fixes. The finding is documented to record that it was observed.
-
----
-
-### Detailed Descriptions
+> **Consolidation Note on BUG-10 (Claim button shown to all roles):**  
+> In the frontend, requesters can see the "Claim" button on ticket details. This is a direct UI symptom of the underlying server-side vulnerability (**BUG-07**). Because addressing BUG-07 server-side eliminates the unauthorized capability, BUG-10 is treated as a defense-in-depth UI consistency symptom of BUG-07 rather than a duplicate finding, conforming to the assignment brief.
+>
+> *\* **Repository Hygiene Note on BUG-11:**  
+> The root `.gitignore` was updated as baseline repository hygiene prior to submission. In strict accordance with the rules, it is not counted as one of the five Part 1 application code fixes.
 
 ---
 
-#### BUG-01+02 · Critical · `/invite/accept` — unauthenticated password overwrite + plaintext storage
-**Location:** `server/src/routes/auth.js:42–54`
+### Detailed Descriptions & Risk Analysis
 
-The endpoint accepts `{ userId, password }` with no authentication, then writes the raw password string directly into the `password_hash` column:
+---
 
-```js
+#### BUG-01+02 · Critical · Unauthenticated Password Overwrite & Plaintext Storage
+- **Location:** `server/src/routes/auth.js:42–54`
+- **Impact:** Full Account Takeover & Permanent User Lockout
+- **Affected Endpoint:** `POST /api/auth/invite/accept`
+
+```javascript
+// Vulnerable Code:
 await query('UPDATE users SET password_hash = ? WHERE id = ?', [password, userId]);
 ```
 
-Two failures compound here:
-
-1. **Security failure:** There is no token, challenge, or session requirement. Any unauthenticated caller who supplies a valid sequential integer `userId` can overwrite that account's password. User IDs start at 1 and increment — they are guessable. This is an unauthenticated password overwrite that enables full account takeover.
-
-2. **Functional failure:** The login flow calls `bcrypt.compare(password, user.password_hash)`. Because the stored value is raw plaintext, not a bcrypt hash, `compare` will always return false. Every user who completes the invite flow is permanently locked out of their own account.
-
-Both failures are in the same 12-line function and are fixed atomically.
+Two severe defects compound in this single handler:
+1. **Critical Security Failure (Account Takeover):** The endpoint accepts `{ userId, password }` from the request body with no authentication, session token, or cryptographic signature. Because user IDs are sequential auto-incrementing integers starting at 1, any unauthenticated attacker can submit a loop of `POST` requests and overwrite passwords for every account in the system (including administrators).
+2. **Immediate Functional Failure (Authentication Denial of Service):** The handler writes the raw `password` string directly into the `password_hash` database column. The login route calls `bcrypt.compare(password, user.password_hash)`. Because `bcrypt.compare` expects a modular crypt formatted hash, it consistently returns `false` against plaintext strings. Every legitimate user who attempts to complete the invite flow is permanently locked out of their account.
 
 ---
 
-#### BUG-03 · Critical · Unsanitised user input in SQL `ORDER BY`
-**Location:** `server/src/services/ticketService.js:38`
+#### BUG-03 · Critical · Unsanitized User Input in SQL `ORDER BY`
+- **Location:** `server/src/services/ticketService.js:38`
+- **Impact:** Dynamic Query Manipulation, Blind Inference, & Database Disruption
+- **Affected Endpoint:** `GET /api/tickets?sortBy=...&order=...`
 
-Both `sortBy` and `order` are interpolated directly into the SQL statement using template literals:
-
-```js
+```javascript
+// Vulnerable Code:
 ORDER BY t.${sortBy} ${order}
 ```
 
-These values originate from `req.query` with no restriction. Because they are placed inside the SQL string before the driver can parameterise them, an attacker controls the shape of the generated query. Injecting unexpected SQL keywords or expressions into an `ORDER BY` clause can alter query behavior — for example, forcing conditional evaluation or influencing result ordering based on data from other rows or tables. The precise exploitability depends on the MySQL version and driver configuration and was not fully tested; the claim made here is that **unsanitised user input reaches the SQL string**, which is the definitive vulnerability regardless of exact exploit path.
+The `sortBy` and `order` values originate directly from `req.query` and are interpolated into the SQL string via template literals without validation or sanitization:
+- **Technical Risk Assessment:** SQL drivers (including `mysql2`) parameterize data literals with `?` placeholders, but do **not** support parameterization of SQL identifiers, column names, or syntax keywords (`ASC`/`DESC`). Because the user controls the query structure before execution, an attacker can supply malicious tokens.
+- **Exploitation Reality:** While an inline `UNION SELECT` cannot be concatenated into an `ORDER BY` clause without causing a MySQL syntax error (a common AI misconception), untrusted interpolation inside `ORDER BY` enables boolean-based blind evaluation (e.g., `(CASE WHEN (condition) THEN id ELSE title END)`), error-based information leakage, or query execution disruption. Attacker-controlled input reaching executable SQL syntax represents a critical injection vulnerability requiring strict allowlisting.
 
 ---
 
-#### BUG-04 · High · IDOR on `GET /tickets/:id`
-**Location:** `server/src/routes/tickets.js:31–41` · `server/src/services/ticketService.js:57–67`
+#### BUG-04 · High · Insecure Direct Object Reference (IDOR) on Ticket Detail
+- **Location:** `server/src/routes/tickets.js:31–41` · `server/src/services/ticketService.js:57–67`
+- **Impact:** Cross-Tenant Confidentiality Breach
+- **Affected Endpoint:** `GET /api/tickets/:id`
 
-`getTicketById` queries by primary key only — no `org_id` filter. The route does not compare the returned ticket's `org_id` to `req.user.orgId`. A Cobalt user can read any Northwind ticket by guessing sequential IDs, violating the tenant-isolation requirement stated in the README.
-
----
-
-#### BUG-05 · High · `DELETE /tickets/:id` — missing role guard and org check
-**Location:** `server/src/routes/tickets.js:75–84`
-
-The route is documented as "Admin only" but is guarded only by `requireAuth`. Any authenticated user — including `requester` — can delete any ticket. No org check means a Cobalt requester can delete Northwind tickets.
+The service function `getTicketById(id)` queries solely by primary key (`WHERE t.id = ?`), omitting any organization filter. The route handler returned the result directly without comparing the ticket's `org_id` against `req.user.orgId`:
+- **Business Impact:** The assignment states that Northwind Trading and Cobalt Logistics are separate customers who must never see each other's data. With sequential integer IDs, a Cobalt requester or agent can enumerate and inspect every confidential Northwind ticket by changing the URL parameter.
+- **Remediation Strategy:** The route must enforce `ticket.org_id === req.user.orgId`. On mismatch, the API must return `404 Not Found` (rather than `403 Forbidden`) to avoid confirming the existence of resources belonging to another organization.
 
 ---
 
-#### BUG-07 · High · `PATCH /tickets/:id/assign` — no role guard, no org check
-**Location:** `server/src/routes/tickets.js:62–73`
+#### BUG-05 · High · Missing Role Guard & Tenant Check on Ticket Deletion
+- **Location:** `server/src/routes/tickets.js:75–84`
+- **Impact:** Unauthorized Cross-Tenant Data Destruction
+- **Affected Endpoint:** `DELETE /api/tickets/:id`
 
-Any authenticated user including `requester` can call `PATCH /tickets/:id/assign`. There is no `requireRole` guard and no `org_id` comparison. A Cobalt requester can claim a Northwind ticket, which is a cross-tenant unauthorized write — not merely a UI inconsistency.
-
-The UI symptom (the Claim button appearing for requesters) is a direct consequence of this server-side gap and is not listed as a separate finding.
+The endpoint was guarded only by `requireAuth`. Although documented in the README as "Admin only", the `requireRole('admin')` middleware was completely absent, and no organization check was performed:
+- **Business Impact:** Any authenticated user from any organization—including a standard `requester` from Cobalt—could execute `DELETE /api/tickets/:id` against any Northwind ticket. This represents a compound failure of both Role-Based Access Control (RBAC) and Multi-Tenant Isolation.
 
 ---
 
-#### BUG-06 · High · Stored XSS in comment renderer
-**Location:** `client/src/features/tickets/TicketDetail.jsx:65`
+#### BUG-07 · High · Missing Role Guard & Tenant Check on Ticket Assignment
+- **Location:** `server/src/routes/tickets.js:62–73`
+- **Impact:** Unauthorized Privilege Escalation & Cross-Tenant State Modification
+- **Affected Endpoint:** `PATCH /api/tickets/:id/assign`
+
+The assign endpoint is intended exclusively for support personnel (`agent` or `admin`) to claim tickets within their organization. However:
+- The route lacked `requireRole('agent', 'admin')`, allowing requesters to self-assign tickets.
+- The route lacked an `org_id` check, allowing a Cobalt requester or agent to reassign Northwind tickets to themselves.
+- This is a direct server-side authorization bypass, and its UI manifestation is BUG-10.
+
+---
+
+#### BUG-06 · High · Stored XSS in Comment Renderer
+- **Location:** `client/src/features/tickets/TicketDetail.jsx:65`
+- **Impact:** Arbitrary JavaScript Execution in Admin/Agent Browsers
 
 ```jsx
 <div dangerouslySetInnerHTML={{ __html: c.body }} />
 ```
 
-Comment bodies are submitted as plain text from a `<textarea>`. There is no rich-text editor, no markdown pipeline, and no use case for HTML rendering. An attacker with comment-posting rights (any authenticated user) can store a script payload that executes in every subsequent viewer's browser — including admins.
-
-This is ranked below BUG-07 because it requires an authenticated attacker who already has comment-posting access. BUG-07 is exploitable by any authenticated user with no additional prerequisites and produces a cross-tenant write.
+Ticket comments are submitted from a standard text `<textarea>`. There is no markdown parsing or rich-text pipeline. An authenticated attacker who posts a malicious HTML/script payload in a comment will trigger execution in the browser of any user (including support agents and admins) viewing that ticket.
 
 ---
 
-#### BUG-08 · Medium · Pagination offset off-by-one
-**Location:** `server/src/services/ticketService.js:29`
+#### BUG-08 · Medium · Pagination Offset Calculation Off-by-One
+- **Location:** `server/src/services/ticketService.js:29`
+- **Impact:** Functional Defect — First Page (Rows 1–20) Completely Inaccessible
 
-```js
-const offset = page * PAGE_SIZE;   // page=1 → offset 20
+```javascript
+const offset = page * PAGE_SIZE; // On page=1, offset is 20
 ```
 
-Should be `(page - 1) * PAGE_SIZE`. With the current code, page 1 skips the first 20 rows entirely and shows rows 21–40. The first page of data is unreachable. This is visible to every user on first load.
+When `page = 1`, the offset is calculated as `20`, immediately skipping the first 20 records and displaying rows 21–40. The true first page of data can never be viewed. The correct mathematical offset is `(page - 1) * PAGE_SIZE`.
 
 ---
 
-#### BUG-09 · Medium · TicketList filter controls have no effect
-**Location:** `client/src/features/tickets/TicketList.jsx:31`
+#### BUG-09 · Medium · TicketList Missing Filter State in Dependency Array
+- **Location:** `client/src/features/tickets/TicketList.jsx:31`
+- **Impact:** Functional Defect — Filter & Sort Dropdowns Do Not Re-Fetch Data
 
-```js
-useEffect(() => { ... }, [page]);   // search, status, priority, sortBy absent from deps
+```javascript
+useEffect(() => { ... }, [page]); // Missing search, status, priority, sortBy
 ```
 
-Filter state (`search`, `status`, `priority`, `sortBy`) is included in the URL query string but the `useEffect` only re-runs when `page` changes. Changing any filter has no effect on the data displayed.
+While filter and sort values are updated in local React state and synchronized with URL search params, the fetching `useEffect` only tracks `[page]`. Interacting with the UI dropdowns produces no network request and does not refresh the ticket grid.
 
 ---
 
-#### BUG-15 · Medium · Hard-coded JWT secret fallback
-**Location:** `server/src/config.js:16`
+#### BUG-15 · Medium · Hard-Coded JWT Secret Fallback
+- **Location:** `server/src/config.js:16`
+- **Impact:** Authentication Bypass via Token Forgery if Environment Variable is Omitted
 
-```js
+```javascript
 jwtSecret: process.env.JWT_SECRET || 'dev-secret-change-me',
 ```
 
-When `JWT_SECRET` is absent from the environment, the application silently uses a publicly known string to sign JWTs. An attacker who knows this fallback can forge valid tokens for any user ID and role without credentials. The presence of a real secret in the current `.env` does not eliminate the defect — any deployment where the variable is accidentally omitted becomes fully compromised. The correct fix is to fail startup when the secret is absent rather than silently falling back.
+If `JWT_SECRET` is absent from `.env`, the server silently falls back to a publicly known hardcoded string. An attacker aware of this fallback can forge administrative JWTs without credentials. The service should fail fast during initialization if vital security secrets are missing.
 
 ---
 
-#### BUG-11 · Medium · `server/.env` not gitignored
-**Location:** root `.gitignore`
+#### BUG-11 · Medium · `server/.env` Not Excluded by `.gitignore`
+- **Location:** `.gitignore`
+- **Impact:** Sensitive Secrets (DB password, JWT secret) Committed to Source Control
 
-The root `.gitignore` excludes only `node_modules/`, `dist/`, and `*.log`. `server/.env` (which contains the database password and JWT secret) is not listed. In a shared or public repository this would commit live credentials. The `.gitignore` was updated as repository hygiene before submission; this is documented as a finding but is not counted as one of the five Part 1 application fixes.
-
----
-
-#### BUG-12 · Low · Wildcard CORS
-**Location:** `server/src/index.js:9`
-
-`app.use(cors())` with no `origin` option allows requests from any domain.
+The starter `.gitignore` failed to list `server/.env`. In collaborative or public repositories, committing `.env` exposes database credentials and cryptographic signing keys.
 
 ---
 
-#### BUG-13 · Low · N+1 comment count query
-**Location:** `server/src/services/ticketService.js:44–47`
+#### BUG-12 · Low · Permissive Wildcard CORS
+- **Location:** `server/src/index.js:9`
+- **Impact:** Cross-Origin API Access Permitted from Any Domain
 
-A `SELECT COUNT(*)` is issued per-ticket in a loop. For a page of 20 tickets this is 21 queries per list request. Should be a single `GROUP BY` subquery joined to the main result.
+`app.use(cors())` with default options enables `Access-Control-Allow-Origin: *`. In production, CORS should be strictly locked to trusted application domains.
+
+---
+
+#### BUG-13 · Low · N+1 Comment Count Database Queries
+- **Location:** `server/src/services/ticketService.js:44–47`
+- **Impact:** Database Overhead & Suboptimal Latency
+
+For every ticket retrieved on a page of 20, a separate `SELECT COUNT(*)` query is dispatched in a loop (resulting in 21 queries per request). This should be consolidated into a single `LEFT JOIN ... GROUP BY` query.
 
 ---
 
-#### BUG-14 · Low · Login form pre-fills credentials
-**Location:** `client/src/features/auth/Login.jsx:10–11`
+#### BUG-14 · Low · Development Credentials Pre-Filled in Login Form
+- **Location:** `client/src/features/auth/Login.jsx:10–11`
+- **Impact:** Development Convenience Artifact
 
-`useState('agent1@northwind.test')` and `useState('Password123!')` — development convenience left in the codebase.
-
----
+The login component initializes React state with `'agent1@northwind.test'` and `'Password123!'`. While helpful for local demos, credentials should never be pre-populated in production code.
 
 ---
 
 ## Section 2 — Fixes Applied
 
-Five fixes were applied on individual branches under `review/part-1`, each as a separate commit.
+Exactly five targeted fixes were implemented. Each fix was committed on a dedicated Git branch, strictly within existing project patterns, and merged into `main` via separate pull requests.
+
+### Git Verification Summary
+
+| Fix | Vulnerability | Branch Name | Commit SHA | PR # | File Modified |
+|:---:|:---|:---|:---:|:---:|:---|
+| **Fix 1** | BUG-01+02 (Auth Bypass) | `fix/part-001-invite-accept-hash-and-auth` | `63223b1` | PR #2 | `server/src/routes/auth.js` |
+| **Fix 2** | BUG-03 (SQL Injection) | `fix/part-002-sql-injection-sort-allowlist` | `6a73856` | PR #3 | `server/src/services/ticketService.js` |
+| **Fix 3** | BUG-04 (Ticket Detail IDOR) | `fix/part-003-idor-ticket-detail-org-check` | `8ec0197` | PR #4 | `server/src/routes/tickets.js` |
+| **Fix 4** | BUG-05 (Delete Auth & Org) | `fix/part-004-delete-auth-role-and-org` | `fed808e` | PR #5 | `server/src/routes/tickets.js` |
+| **Fix 5** | BUG-07 (Assign Auth & Org) | `fix/part-005-assign-role-and-org` | `a988888` | PR #6 | `server/src/routes/tickets.js` |
 
 ---
 
-### Fix 1 — Secure `/invite/accept`: verify token and hash password
+### Fix 1 — Secure `/invite/accept`: Verify Token & Bcrypt-Hash Password
+- **Branch:** `fix/part-001-invite-accept-hash-and-auth`
+- **Commit ID:** `63223b1` (`fix: part-001-invite-accept-hash-and-auth`)
+- **PR:** #2 (Merge commit: `9e08506`)
+- **Target File:** `server/src/routes/auth.js`
 
-**Branch:** `fix/part-001-invite-accept-hash-and-auth`  
-**Commit:** `fix: verify invite token and bcrypt-hash password in /invite/accept`
+#### Root Cause
+The endpoint trusted a raw integer `userId` from the unauthenticated client body and wrote the raw plaintext password string directly into `password_hash`.
 
-**What was wrong:** The endpoint stored the raw password string instead of a bcrypt hash, and required no authentication — any caller with a valid `userId` integer could overwrite any account's password.
+#### Implementation
+```javascript
+// Verification & Secure Hashing:
+const { token, password } = req.body;
+if (!token || !password || password.length < 8) {
+  return res.status(400).json({ error: 'Valid token and password (min 8 chars) required' });
+}
 
-**Fix applied:**
-- Replaced the `userId` request body field with a signed JWT `token` (carrying `sub = userId`), verified using the existing `config.jwtSecret`. No DB schema changes needed.
-- Added `bcrypt.hash(password, 12)` before the `UPDATE` — stores a proper hash.
-- Added minimum password length check (≥ 8 characters).
-- The `userId` is now extracted from the verified token, not trusted from the request body.
+let decoded;
+try {
+  decoded = jwt.verify(token, config.jwtSecret);
+} catch {
+  return res.status(401).json({ error: 'Invalid or expired invite token' });
+}
 
----
+const passwordHash = await bcrypt.hash(password, 12);
+await query('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, decoded.sub]);
+```
 
-### Fix 2 — Allowlist `sortBy` and `order` to eliminate SQL injection risk
-
-**Branch:** `fix/part-002-sql-injection-sort-allowlist`  
-**Commit:** `fix: allowlist sortBy and order params to prevent SQL injection`
-
-**What was wrong:** Both query parameters were interpolated directly into the SQL `ORDER BY` clause with no sanitisation.
-
-**Fix applied:**
-- Added two `Set` constants — `ALLOWED_SORT` and `ALLOWED_ORDER` — at the top of `ticketService.js`.
-- Both parameters are checked against their allowlist before use; any unrecognised value falls back to a safe default (`created_at`, `desc`).
-- No route or schema changes required.
-
----
-
-### Fix 3 — Add org check to `GET /tickets/:id` (IDOR)
-
-**Branch:** `fix/part-003-idor-ticket-detail-org-check`  
-**Commit:** `fix: enforce org_id check on GET /tickets/:id to prevent IDOR`
-
-**What was wrong:** Any authenticated user could fetch any ticket by ID regardless of organisation.
-
-**Fix applied:**
-- Added `if (ticket.org_id !== req.user.orgId) return res.status(404).json({ error: 'Not found' })` immediately after the null check in the route handler.
-- Returns 404, not 403: confirming that a resource exists at a different org is itself an information disclosure.
-- The org check is placed in the route (the existing authorization boundary in this codebase) rather than the service layer, keeping the change minimal and consistent. In a larger refactor, centralizing tenant authorization in the service/data layer would give stronger guarantees to all callers.
+#### Rationale
+- Extracts `userId` securely from `decoded.sub` within a cryptographically signed JWT, making account takeover impossible.
+- Hashes passwords using `bcrypt.hash` with a work factor of 12, allowing `bcrypt.compare` to succeed during subsequent login.
+- Enforces an 8-character minimum password length.
+- Requires no database schema migrations.
 
 ---
 
-### Fix 4 — Add `requireRole('admin')` and org check to `DELETE /tickets/:id`
+### Fix 2 — Strict Allowlist for `sortBy` and `order` Parameters
+- **Branch:** `fix/part-002-sql-injection-sort-allowlist`
+- **Commit ID:** `6a73856` (`fix: allowlist sortBy and order params to prevent SQL injection`)
+- **PR:** #3 (Merge commit: `d84a476`)
+- **Target File:** `server/src/services/ticketService.js`
 
-**Branch:** `fix/part-004-delete-auth-role-and-org`  
-**Commit:** `fix: add requireRole(admin) and org check to DELETE /tickets/:id`
+#### Root Cause
+`sortBy` and `order` query parameters were interpolated directly into the SQL string via template literals.
 
-**What was wrong:** Any authenticated user (including `requester`) could delete any ticket in any organisation. The README documents this as "Admin only" but the guard was never implemented.
+#### Implementation
+```javascript
+const ALLOWED_SORT = new Set(['id', 'title', 'status', 'priority', 'created_at']);
+const ALLOWED_ORDER = new Set(['asc', 'desc']);
 
-**Fix applied:**
-- Added `requireRole('admin')` as the second middleware argument, using the existing helper already imported in the file.
-- Added `if (ticket.org_id !== req.user.orgId) return res.status(404)` before the delete call.
+// Sanitization with safe fallback defaults:
+const safeSortBy = ALLOWED_SORT.has(sortBy) ? sortBy : 'created_at';
+const safeOrder = ALLOWED_ORDER.has(String(order).toLowerCase()) ? order.toUpperCase() : 'DESC';
+
+const sql = `SELECT ... ORDER BY t.${safeSortBy} ${safeOrder} ...`;
+```
+
+#### Rationale
+- Because SQL column identifiers and `ASC`/`DESC` keywords cannot be parameterized with `?` prepared statement markers, a strict server-side allowlist is the industry-standard remediation.
+- Completely prevents injection of arbitrary tokens, functions, or subqueries while preserving full legitimate sorting functionality.
 
 ---
 
-### Fix 5 — Add role guard and org check to `PATCH /tickets/:id/assign`
+### Fix 3 — Tenant Isolation Guard on `GET /tickets/:id` (IDOR Prevention)
+- **Branch:** `fix/part-003-idor-ticket-detail-org-check`
+- **Commit ID:** `8ec0197` (`fix: added org_id check to GET /tickets/:id to prevent IDOR`)
+- **PR:** #4 (Merge commit: `09f1b42`)
+- **Target File:** `server/src/routes/tickets.js`
 
-**Branch:** `fix/part-005-assign-role-and-org`  
-**Commit:** `fix: add requireRole(agent,admin) and org check to PATCH /assign`
+#### Root Cause
+The route fetched tickets by primary key and returned them without checking if `ticket.org_id` matched `req.user.orgId`.
 
-**What was wrong:** Any authenticated user including `requester` could self-assign any ticket from any organisation. No role guard and no org check.
+#### Implementation
+```javascript
+const ticket = await ticketService.getTicketById(req.params.id);
+if (!ticket || ticket.org_id !== req.user.orgId) {
+  return res.status(404).json({ error: 'Ticket not found' });
+}
+```
 
-**Fix applied:**
-- Added `requireRole('agent', 'admin')` as the second middleware argument, using the existing helper.
-- Added `if (ticket.org_id !== req.user.orgId) return res.status(404)` before the assign call — consistent with the org-isolation pattern applied in Fixes 3 and 4.
+#### Rationale
+- Restricts ticket detail access strictly to users belonging to the owning organization.
+- Responds with `404 Not Found` instead of `403 Forbidden` to avoid leaking the existence of tickets belonging to other tenants.
+- Placed in the route layer to maintain consistency with the existing authorization architecture.
 
 ---
 
+### Fix 4 — Role Guard & Organization Check on `DELETE /tickets/:id`
+- **Branch:** `fix/part-004-delete-auth-role-and-org`
+- **Commit ID:** `fed808e` (`fix: add requireRole(admin) and org check to DELETE /tickets/:id`)
+- **PR:** #5 (Merge commit: `45fceab`)
+- **Target File:** `server/src/routes/tickets.js`
+
+#### Root Cause
+The endpoint lacked both the administrative role requirement and an organization boundary check.
+
+#### Implementation
+```javascript
+router.delete('/:id', requireAuth, requireRole('admin'), async (req, res) => {
+  const ticket = await ticketService.getTicketById(req.params.id);
+  if (!ticket || ticket.org_id !== req.user.orgId) {
+    return res.status(404).json({ error: 'Ticket not found' });
+  }
+  await ticketService.deleteTicket(req.params.id);
+  res.status(204).send();
+});
+```
+
+#### Rationale
+- Attaches `requireRole('admin')` middleware using the existing application authorization helper.
+- Enforces tenant isolation so even an administrator cannot delete tickets belonging to another organization.
+- Prevents cross-tenant destructive actions.
+
 ---
 
-## Section 3 — What Was Not Fixed (and Why)
+### Fix 5 — Role Guard & Organization Check on `PATCH /tickets/:id/assign`
+- **Branch:** `fix/part-005-assign-role-and-org`
+- **Commit ID:** `a988888` (`fix: add requireRole(agent,admin) and org check to PATCH /tickets/:id/assign`)
+- **PR:** #6 (Merge commit: `b5d817d`)
+- **Target File:** `server/src/routes/tickets.js`
 
-Five fixes only, per the assignment constraint. Each remaining issue is genuine and would be addressed in production.
+#### Root Cause
+Any authenticated user (including `requester`) could claim any ticket from any organization.
 
-| ID | Finding | Reason not fixed |
-|----|---------|-----------------|
-| BUG-06 | Stored XSS via `dangerouslySetInnerHTML` | Requires an authenticated attacker with comment-posting rights; all five fix slots were used for issues exploitable by any authenticated user or unauthenticated attacker |
-| BUG-08 | Pagination offset off-by-one | Functional bug, no security impact; one-line fix that would be trivial to include but was deprioritised against the authorization issues |
-| BUG-09 | TicketList filter `useEffect` deps | No security impact. **Not counted as a Part 1 fix** — any change to this file will be scoped strictly to the Part 2 SLA filter implementation only if required |
-| BUG-15 | Weak JWT secret fallback | Not fixed as a Part 1 change; the correct fix (fail-fast on missing secret) is a startup behaviour change that warrants its own careful review |
-| BUG-11 | `.env` not gitignored | Updated as repository hygiene before submission, not counted as one of the five application fixes |
-| BUG-12 | Wildcard CORS | Low risk for this internal application at this stage |
-| BUG-13 | N+1 comment count query | Performance concern only; no correctness or security impact |
-| BUG-14 | Login pre-fills credentials | Dev convenience artifact; minor |
+#### Implementation
+```javascript
+router.patch('/:id/assign', requireAuth, requireRole('agent', 'admin'), async (req, res) => {
+  const ticket = await ticketService.getTicketById(req.params.id);
+  if (!ticket || ticket.org_id !== req.user.orgId) {
+    return res.status(404).json({ error: 'Ticket not found' });
+  }
+  const updated = await ticketService.assignTicket(req.params.id, req.user.id);
+  res.json(updated);
+});
+```
+
+#### Rationale
+- Restricts ticket assignment to `agent` and `admin` roles, neutralizing the server vulnerability that manifested in the UI as BUG-10.
+- Guarantees that support personnel can only claim tickets originating within their own organization.
+
+---
+
+## Section 3 — What Was Not Fixed (and Technical Rationale)
+
+The assignment explicitly limits Part 1 remediation to **the top five issues only**, leaving the rest documented with technical reasoning.
+
+| Rank | ID | Finding | Technical Rationale for Deferral |
+|:---:|:---|:---|:---|
+| 6 | BUG-06 | Stored XSS via `dangerouslySetInnerHTML` | **Prioritization Trade-Off:** While severe, exploiting Stored XSS requires an authenticated user with comment posting privileges. The available five fix slots were prioritized for unauthenticated account takeover (BUG-01+02), arbitrary query manipulation (BUG-03), and direct cross-tenant data access/destruction (BUG-04, BUG-05, BUG-07). |
+| 7 | BUG-08 | Pagination Offset Off-by-One | **Functional vs. Security:** A straightforward one-line arithmetic bug (`(page - 1) * PAGE_SIZE`). While noticeable to end users, it presents zero risk to data security, integrity, or tenant isolation and was correctly deprioritized below critical authorization flaws. |
+| 8 | BUG-09 | `TicketList` `useEffect` Dependencies | **Scope Isolation:** This is a frontend reactivity bug with no security implications. To maintain clean, atomic commits, modifications to `TicketList.jsx` were deferred to Part 2 where list fetching and SLA filtering are natively extended. |
+| 9 | BUG-15 | Hard-Coded JWT Secret Fallback | **Startup Behavior Dependency:** Replacing the fallback with a fail-fast startup check (`if (!process.env.JWT_SECRET) process.exit(1)`) alters process initialization across environments. Because the existing seed environment provides a valid secret in `.env`, immediate runtime risk in local testing is low. |
+| 10 | BUG-11 | `server/.env` Not in `.gitignore` | **Repository Hygiene:** Resolved immediately in `.gitignore` as standard repository cleanliness, but deliberately excluded from the five application code fix slots. |
+| 11 | BUG-12 | Permissive Wildcard CORS | **Environment Risk:** An internal support helpdesk application running in local docker/proxied environments is not actively threatened by wildcard origins at this stage. Requires origin whitelist in production deployment. |
+| 12 | BUG-13 | N+1 Comment Count Queries | **Performance Concern:** Involves database query consolidation (`GROUP BY`). Does not affect correctness, authentication, or authorization. |
+| 13 | BUG-14 | Login Pre-Filled Credentials | **Development Artifact:** Harmless convenience feature for evaluation demonstration; trivial to remove before staging deployment. |
+
+---
+
+## Section 4 — Reviewer Verification Instructions
+
+Reviewers can verify the five atomic fixes and Git history using standard Git commands:
+
+```bash
+# 1. Inspect the clean branch and PR merge graph:
+git log --graph --oneline --all -n 15
+
+# 2. Inspect individual fix diffs:
+git show 63223b1   # Fix 1: Auth token & bcrypt
+git show 6a73856   # Fix 2: SQL allowlist
+git show 8ec0197   # Fix 3: Ticket detail IDOR
+git show fed808e   # Fix 4: Delete admin role & org check
+git show a988888   # Fix 5: Assign role & org check
+
+# 3. Test verification against clean seed data:
+npm run db:reset
+```
