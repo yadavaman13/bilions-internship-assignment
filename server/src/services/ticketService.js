@@ -2,6 +2,11 @@ import { query } from '../db/pool.js';
 
 const PAGE_SIZE = 20;
 
+// Fix: BUG-03 — sortBy and order were interpolated directly into SQL from req.query.
+// Allowlist both values; unrecognised input falls back to a safe default.
+const ALLOWED_SORT  = new Set(['created_at', 'updated_at', 'priority', 'status', 'subject']);
+const ALLOWED_ORDER = new Set(['asc', 'desc']);
+
 /**
  * Paginated ticket list for the current organisation.
  *
@@ -9,6 +14,8 @@ const PAGE_SIZE = 20;
  * and sorting by any column the UI exposes in its dropdown.
  */
 export async function listTickets({ orgId, page = 1, search = '', status, priority, sortBy = 'created_at', order = 'desc' }) {
+  const safeSortBy = ALLOWED_SORT.has(sortBy)  ? sortBy : 'created_at';
+  const safeOrder  = ALLOWED_ORDER.has(order)   ? order  : 'desc';
   const where = ['t.org_id = ?'];
   const params = [orgId];
 
@@ -35,7 +42,7 @@ export async function listTickets({ orgId, page = 1, search = '', status, priori
        LEFT JOIN users u ON u.id = t.assignee_id
        JOIN users r ON r.id = t.requester_id
       WHERE ${whereSql}
-      ORDER BY t.${sortBy} ${order}
+      ORDER BY t.${safeSortBy} ${safeOrder}
       LIMIT ? OFFSET ?`,
     [...params, PAGE_SIZE, offset]
   );
